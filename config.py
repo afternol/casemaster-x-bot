@@ -21,7 +21,7 @@ SUPABASE_URL         = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 
 # ── サイト情報 ───────────────────────────────────────────────
-SITE_URL = os.getenv("SITE_URL", "https://casemasterpro.com")
+SITE_URL = os.getenv("SITE_URL", "https://casemaster-pro.com/")
 
 # ── 投稿時間枠（JST）──────────────────────────────────────────
 # 6枠から毎日3枠をランダム選択（日付シードで冪等）
