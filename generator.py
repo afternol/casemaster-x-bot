@@ -11,6 +11,7 @@ import anthropic
 from config import ANTHROPIC_API_KEY, SITE_URL, CONTENT_DIR
 
 _client: anthropic.Anthropic | None = None
+_system_prompt: str | None = None
 
 
 def _get_client() -> anthropic.Anthropic:
@@ -18,6 +19,15 @@ def _get_client() -> anthropic.Anthropic:
     if _client is None:
         _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     return _client
+
+
+def _get_system_prompt() -> str:
+    """character.md をシステムプロンプトとして読み込む（キャッシュ）"""
+    global _system_prompt
+    if _system_prompt is None:
+        path = CONTENT_DIR / "character.md"
+        _system_prompt = path.read_text(encoding="utf-8")
+    return _system_prompt
 
 
 def _load_yaml(filename: str) -> list[dict]:
@@ -29,8 +39,9 @@ def _load_yaml(filename: str) -> list[dict]:
 def _call_claude(prompt: str) -> str:
     client = _get_client()
     response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+        model="claude-sonnet-4-6",
         max_tokens=300,
+        system=_get_system_prompt(),
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text.strip()
