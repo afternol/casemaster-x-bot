@@ -1,0 +1,110 @@
+"""
+CaseMaster Pro X Bot — スケジューラ
+毎日 0:30 JST に GitHub Actions で実行される。
+
+今日の投稿枠3つをランダム選択し、Claude で本文を生成して
+Supabase の x_post_queue テーブルに登録する。
+日付シードで冪等（再実行しても重複しない）。
+"""
+import random
+import sys
+from datetime import date, datetime, timedelta, timezone
+
+from config import TIME_WINDOWS, DAILY_POST_COUNT, CONTENT_TYPES
+from config import SUPABASE_URL, SUPABASE_SERVICE_KEY
+from generator import generate_tweet_text
+
+JST = timezone(timedelta(hours=9))
+
+
+def today_jst() -> date:
+    return datetime.now(JST).date()
+
+
+def select_windows(today: date) -> list[dict]:
+    """日付シードで DAILY_POST_COUNT 個の枠を選ぶ（冪等）"""
+    seed = int(today.strftime("%Y%m%d"))
+    rng = random.Random(seed)
+    return rng.sample(TIME_WINDOWS, DAILY_POST_COUNT)
+
+
+def random_time_in_window(window: dict, today: date, slot_index: int) -> datetime:
+    """指定枠内のランダムな時刻（JST）を返す（日付＋スロットでシード）"""
+    seed = int(today.strftime("%Y%m%d")) + slot_index * 1000
+    rng = random.Random(seed)
+    start_min = window["start"][0] * 60 + window["start"][1]
+    end_min   = window["end"][0]   * 60 + window["end"][1]
+    chosen_min = rng.randint(start_min, end_min)
+    second = rng.randint(0, 59)
+    return datetime(
+        today.year, today.month, today.day,
+        chosen_min // 60, chosen_min % 60, second,
+        tzinfo=JST,
+    )
+
+
+def pick_content_type(today: date, slot_index: int) -> str:
+    """重み付きでコンテンツタイプを選択（日付＋スロットでシード）"""
+    seed = int(today.strftime("%Y%m%d")) + slot_index * 9999
+    rng = random.Random(seed)
+    types   = list(CONTENT_TYPES.keys())
+    weights = list(CONTENT_TYPES.values())
+    return rng.choices(types, weights=weights, k=1)[0]
+
+
+def schedule_today(dry_run: bool = False) -> None:
+    today   = today_jst()
+    windows = select_windows(today)
+
+    print(f"[scheduler] {today} — 選択枠: {[w['name'] for w in windows]}")
+
+    if not dry_run:
+        from supabase import create_client
+        sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+        # 冪等チェック: 今日すでに登録済みなら何もしない
+        today_start = datetime(today.year, today.month, today.day, 0, 0, 0, tzinfo=JST).isoformat()
+        today_end   = datetime(today.year, today.month, today.day, 23, 59, 59, tzinfo=JST).isoformat()
+        existing = (
+            sb.table("x_post_queue")
+            .select("id", count="exact")
+            .gte("scheduled_at", today_start)
+            .lte("scheduled_at", today_end)
+            .execute()
+        )
+        count = existing.count if hasattr(existing, "count") else len(existing.data)
+        if count and count > 0:
+            print(f"[scheduler] 今日の投稿はすでに {count} 件登録済み。スキップ。")
+            return
+
+    records = []
+    for i, window in enumerate(windows):
+        scheduled_at = random_time_in_window(window, today, i)
+        content_type = pick_content_type(today, i)
+
+        print(f"  [{window['name']}枠] {scheduled_at.strftime('%H:%M:%S')} | type={content_type} | 生成中...")
+        text = generate_tweet_text(content_type)
+        char_count = len(text)
+        print(f"    → {char_count}文字: {text[:60]}{'...' if char_count > 60 else ''}")
+
+        if dry_run:
+            print(f"    [DRY RUN] 登録スキップ")
+            continue
+
+        records.append({
+            "content_type": content_type,
+            "text": text,
+            "scheduled_at": scheduled_at.isoformat(),
+            "status": "pending",
+        })
+
+    if not dry_run and records:
+        sb.table("x_post_queue").insert(records).execute()
+        print(f"[scheduler] 完了: {len(records)} 件をキューに追加")
+    elif dry_run:
+        print(f"[scheduler] ドライラン完了: {len(windows)} 件を生成（未登録）")
+
+
+if __name__ == "__main__":
+    dry = "--dry" in sys.argv
+    schedule_today(dry_run=dry)
