@@ -52,16 +52,29 @@ def pick_content_type(today: date, slot_index: int) -> str:
     return rng.choices(types, weights=weights, k=1)[0]
 
 
+def fetch_recent_tweets(sb, limit: int = 30) -> list[str]:
+    """投稿済みツイートのテキストを新しい順に取得する"""
+    result = (
+        sb.table("x_post_queue")
+        .select("text")
+        .eq("status", "posted")
+        .order("posted_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return [row["text"] for row in result.data]
+
+
 def schedule_today(dry_run: bool = False) -> None:
     today   = today_jst()
     windows = select_windows(today)
 
     print(f"[scheduler] {today} — 選択枠: {[w['name'] for w in windows]}")
 
-    if not dry_run:
-        from supabase import create_client
-        sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    from supabase import create_client
+    sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
+    if not dry_run:
         # 冪等チェック: 今日すでに登録済みなら何もしない
         today_start = datetime(today.year, today.month, today.day, 0, 0, 0, tzinfo=JST).isoformat()
         today_end   = datetime(today.year, today.month, today.day, 23, 59, 59, tzinfo=JST).isoformat()
@@ -77,15 +90,22 @@ def schedule_today(dry_run: bool = False) -> None:
             print(f"[scheduler] 今日の投稿はすでに {count} 件登録済み。スキップ。")
             return
 
+    # 過去ツイートを取得して重複回避に使う
+    recent_tweets = fetch_recent_tweets(sb)
+    print(f"[scheduler] 過去ツイート {len(recent_tweets)} 件を重複チェック用に取得")
+
     records = []
     for i, window in enumerate(windows):
         scheduled_at = random_time_in_window(window, today, i)
         content_type = pick_content_type(today, i)
 
         print(f"  [{window['name']}枠] {scheduled_at.strftime('%H:%M:%S')} | type={content_type} | 生成中...")
-        text = generate_tweet_text(content_type)
+        text = generate_tweet_text(content_type, recent_tweets=recent_tweets)
         char_count = len(text)
         print(f"    → {char_count}文字: {text[:60]}{'...' if char_count > 60 else ''}")
+
+        # 生成したツイートも次の枠の重複チェック対象に追加
+        recent_tweets.insert(0, text)
 
         if dry_run:
             print(f"    [DRY RUN] 登録スキップ")

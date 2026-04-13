@@ -38,7 +38,7 @@ def _call_claude(prompt: str) -> str:
 
 # ── コンテンツタイプ別生成関数 ─────────────────────────────────
 
-def _gen_framework() -> str:
+def _gen_framework(recent_block: str = "") -> str:
     items = _load_yaml("frameworks.yml")
     item = random.choice(items)
     prompt = f"""あなたはコンサル・ケース面接対策アカウントです。
@@ -46,7 +46,7 @@ def _gen_framework() -> str:
 
 フレームワーク名: {item['name']}
 説明: {item['description']}
-
+{recent_block}
 条件:
 - 140文字以内（厳守）
 - 絵文字を1〜2個使う
@@ -56,7 +56,7 @@ def _gen_framework() -> str:
     return _call_claude(prompt)
 
 
-def _gen_fermi() -> str:
+def _gen_fermi(recent_block: str = "") -> str:
     items = _load_yaml("fermi.yml")
     item = random.choice(items)
     prompt = f"""あなたはコンサル・ケース面接対策アカウントです。
@@ -64,7 +64,7 @@ def _gen_fermi() -> str:
 
 問題: {item['question']}
 ヒント（ツイートには出さない。問題の難易度把握のみに使う）: {item['hint']}
-
+{recent_block}
 条件:
 - 140文字以内（厳守）
 - 「今日の練習問題💡」「フェルミ推定チャレンジ🧮」などの導入
@@ -74,10 +74,10 @@ def _gen_fermi() -> str:
     return _call_claude(prompt)
 
 
-def _gen_tips() -> str:
-    prompt = """あなたはコンサル・ケース面接対策アカウントです。
+def _gen_tips(recent_block: str = "") -> str:
+    prompt = f"""あなたはコンサル・ケース面接対策アカウントです。
 ケース面接を受ける就活生・転職希望者に向けた実践的なtipsを1つツイートしてください。
-
+{recent_block}
 条件:
 - 140文字以内（厳守）
 - 「〇〇するだけで」「NG→OK」の対比、「面接官が見ているのは〇〇」などの具体的切り口
@@ -88,7 +88,7 @@ def _gen_tips() -> str:
     return _call_claude(prompt)
 
 
-def _gen_terminology() -> str:
+def _gen_terminology(recent_block: str = "") -> str:
     terms = [
         "MECE", "イシューツリー", "ロジックツリー", "ボトムアップ推計", "トップダウン推計",
         "仮説思考", "構造化思考", "感度分析", "KPI設計", "バリューチェーン",
@@ -101,7 +101,7 @@ def _gen_terminology() -> str:
 以下の用語を就活生向けに端的に解説するツイートを書いてください。
 
 用語: {term}
-
+{recent_block}
 条件:
 - 140文字以内（厳守）
 - 「{term}とは？」または「【{term}】」で始める
@@ -112,10 +112,10 @@ def _gen_terminology() -> str:
     return _call_claude(prompt)
 
 
-def _gen_mistake() -> str:
-    prompt = """あなたはコンサル・ケース面接対策アカウントです。
+def _gen_mistake(recent_block: str = "") -> str:
+    prompt = f"""あなたはコンサル・ケース面接対策アカウントです。
 ケース面接でよくある失敗・NGパターンを1つ取り上げて、改善策とともにツイートしてください。
-
+{recent_block}
 条件:
 - 140文字以内（厳守）
 - 「〇〇してしまいがち」「多くの人がやるミス」などの共感入り口
@@ -126,7 +126,7 @@ def _gen_mistake() -> str:
     return _call_claude(prompt)
 
 
-def _gen_industry() -> str:
+def _gen_industry(recent_block: str = "") -> str:
     industries = [
         "コンサルティング業界", "外資系金融", "総合商社", "メーカー（製造業）",
         "ITサービス・SaaS", "小売・EC", "不動産", "物流・運輸",
@@ -136,7 +136,7 @@ def _gen_industry() -> str:
     industry = random.choice(industries)
     prompt = f"""あなたはコンサル・ケース面接対策アカウントです。
 {industry}のケース面接で押さえるべき論点・分析の切り口をツイートしてください。
-
+{recent_block}
 条件:
 - 140文字以内（厳守）
 - 「{industry}のケースが出たら〇〇を押さえよう」のような実践的な内容
@@ -147,7 +147,7 @@ def _gen_industry() -> str:
     return _call_claude(prompt)
 
 
-def _gen_question() -> str:
+def _gen_question(recent_block: str = "") -> str:
     question_types = [
         "コンビニチェーンの売上が前年比15%減少している。原因と対策を考えよ。",
         "大手ECが食料品即配市場に参入する際の戦略を立案せよ。",
@@ -165,7 +165,7 @@ def _gen_question() -> str:
 以下のケース問題を使った練習促進ツイートを書いてください。
 
 問題: {question}
-
+{recent_block}
 条件:
 - 140文字以内（厳守）
 - 「今週のケース問題💼」「これを解けたら本番でも戦える」などの導入
@@ -176,7 +176,7 @@ def _gen_question() -> str:
     return _call_claude(prompt)
 
 
-def _gen_quote() -> str:
+def _gen_quote(recent_block: str = "") -> str:
     quotes = [
         {"text": "問いを正しく立てれば、答えの半分は出ている。", "author": "コンサルの格言"},
         {"text": "データは過去を語り、仮説は未来を語る。", "author": "戦略思考の原則"},
@@ -192,7 +192,7 @@ def _gen_quote() -> str:
 以下の言葉を引用したツイートを書いてください。ケース面接や論理的思考に絡めたコメントを添えてください。
 
 言葉: 「{quote['text']}」（{quote['author']}）
-
+{recent_block}
 条件:
 - 140文字以内（厳守）
 - 引用を冒頭に入れ、「ケース面接でも〇〇」「この思考が〇〇につながる」などのコメントを添える
@@ -202,7 +202,7 @@ def _gen_quote() -> str:
     return _call_claude(prompt)
 
 
-def _gen_promo() -> str:
+def _gen_promo(recent_block: str = "") -> str:
     angles = [
         "AIと本番同様のケース面接練習ができる点",
         "即時フィードバックで弱点が一目でわかる点",
@@ -217,7 +217,7 @@ def _gen_promo() -> str:
 
 紹介する角度: {angle}
 サイトURL: {SITE_URL}
-
+{recent_block}
 条件:
 - 140文字以内（厳守）
 - 「〇〇で悩んでいる方へ」「こんな練習方法があります」などの入り方（ハードな売り込みは避ける）
@@ -243,12 +243,26 @@ _GENERATORS = {
 }
 
 
-def generate_tweet_text(content_type: str) -> str:
-    """指定タイプのツイートテキストを生成して返す"""
+def _build_recent_block(recent_tweets: list[str]) -> str:
+    """過去ツイートリストをプロンプト用テキストに変換する"""
+    if not recent_tweets:
+        return ""
+    lines = "\n".join(f"- {t}" for t in recent_tweets[:30])
+    return f"""
+【重要】以下の過去ツイートと同じネタ・似た切り口・似た文章は絶対に避けてください:
+{lines}
+"""
+
+
+def generate_tweet_text(content_type: str, recent_tweets: list[str] | None = None) -> str:
+    """指定タイプのツイートテキストを生成して返す。
+    recent_tweets: 過去の投稿済みツイートテキストのリスト（重複回避に使用）
+    """
     gen_fn = _GENERATORS.get(content_type)
     if gen_fn is None:
         raise ValueError(f"Unknown content_type: {content_type!r}. Must be one of {list(_GENERATORS)}")
-    return gen_fn()
+    recent_block = _build_recent_block(recent_tweets or [])
+    return gen_fn(recent_block=recent_block)
 
 
 # ── CLI ───────────────────────────────────────────────────────
