@@ -1,14 +1,32 @@
 """
 CaseMaster Pro X Bot — コンテンツ生成モジュール
-Claude Haiku API を使って9種のコンテンツタイプのツイートを生成する。
+Claude Sonnet API を使って9種のコンテンツタイプのツイートを生成する。
 """
 import random
+import re
 import yaml
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import anthropic
 
 from config import ANTHROPIC_API_KEY, SITE_URL, CONTENT_DIR
+
+JST = timezone(timedelta(hours=9))
+
+# ── バリデーション設定 ───────────────────────────────────────────
+
+# コードで機械的に検出する禁止フレーズ（Claudeの自己チェックに依存しない）
+FORBIDDEN_PHRASES = [
+    "一度だけ", "まず1回", "試しに", "1回だけ",
+    "合格率", "内定率", "合格保証", "内定保証",
+    "業界No.1", "業界ナンバーワン", "唯一の",
+    "casemasterpro.com",           # 誤URL（ハイフンなし）
+    "casemaster pro.com",
+]
+
+MAX_TWEET_LENGTH = 140
+MAX_RETRIES = 3
 
 _client: anthropic.Anthropic | None = None
 _system_prompt: str | None = None
@@ -22,12 +40,13 @@ def _get_client() -> anthropic.Anthropic:
 
 
 def _get_system_prompt() -> str:
-    """character.md をシステムプロンプトとして読み込む（キャッシュ）"""
+    """character.md + 今日の日付をシステムプロンプトとして返す（日付は毎回動的に付与）"""
     global _system_prompt
     if _system_prompt is None:
         path = CONTENT_DIR / "character.md"
         _system_prompt = path.read_text(encoding="utf-8")
-    return _system_prompt
+    today = datetime.now(JST).strftime("%Y年%m月%d日")
+    return f"{_system_prompt}\n\n---\n\n## 今日の日付\n{today}（JST）\nこの日付を踏まえて就活・転職の時期感覚を持った投稿をしてください。"
 
 
 def _load_yaml(filename: str) -> list[dict]:
@@ -269,15 +288,64 @@ def _build_recent_block(recent_tweets: list[str]) -> str:
 """
 
 
+def _validate(text: str, content_type: str) -> list[str]:
+    """
+    ツイートテキストをコードで機械的に検証する。
+    Claudeの自己チェックには依存しない。
+    戻り値: エラーメッセージのリスト（空リストなら合格）
+    """
+    errors = []
+
+    # 1. 文字数チェック
+    if len(text) > MAX_TWEET_LENGTH:
+        errors.append(f"文字数超過: {len(text)}文字（上限{MAX_TWEET_LENGTH}文字）")
+
+    # 2. 禁止フレーズチェック
+    for phrase in FORBIDDEN_PHRASES:
+        if phrase in text:
+            errors.append(f"禁止フレーズ含む: 「{phrase}」")
+
+    # 3. promoタイプはURLが必須かつ正しいURLであること
+    if content_type == "promo":
+        if "casemaster-pro.com" not in text:
+            errors.append("promoタイプにURLが含まれていない")
+
+    # 4. 空チェック
+    if not text.strip():
+        errors.append("空のテキスト")
+
+    return errors
+
+
 def generate_tweet_text(content_type: str, recent_tweets: list[str] | None = None) -> str:
-    """指定タイプのツイートテキストを生成して返す。
+    """
+    指定タイプのツイートテキストを生成して返す。
+    バリデーション失敗時は最大MAX_RETRIES回まで再生成する。
     recent_tweets: 過去の投稿済みツイートテキストのリスト（重複回避に使用）
     """
     gen_fn = _GENERATORS.get(content_type)
     if gen_fn is None:
         raise ValueError(f"Unknown content_type: {content_type!r}. Must be one of {list(_GENERATORS)}")
+
     recent_block = _build_recent_block(recent_tweets or [])
-    return gen_fn(recent_block=recent_block)
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        text = gen_fn(recent_block=recent_block)
+        errors = _validate(text, content_type)
+
+        if not errors:
+            if attempt > 1:
+                print(f"    [validation] {attempt}回目で合格")
+            return text
+
+        print(f"    [validation] 試行{attempt}/{MAX_RETRIES} 失敗: {errors}")
+        # 再生成時はバリデーション失敗理由をプロンプトに追加
+        violation_note = "【前回の生成で以下の違反がありました。必ず修正してください】\n" + "\n".join(f"- {e}" for e in errors)
+        recent_block = f"{violation_note}\n\n{recent_block}"
+
+    # 最大リトライ後もNG → 最後の生成結果を警告付きで返す（止めるより投稿を優先）
+    print(f"    [validation] 最大リトライ到達。最終テキストを使用（要確認）")
+    return text
 
 
 # ── CLI ───────────────────────────────────────────────────────
