@@ -40,19 +40,6 @@ def main():
         wait_on_rate_limit=True,
     )
 
-    # 認証情報の確認（値が空でないか）
-    print(f"[debug] API_KEY    : {'SET' if X_API_KEY else 'EMPTY'}")
-    print(f"[debug] API_SECRET : {'SET' if X_API_SECRET else 'EMPTY'}")
-    print(f"[debug] ACC_TOKEN  : {'SET' if X_ACCESS_TOKEN else 'EMPTY'}")
-    print(f"[debug] ACC_SECRET : {'SET' if X_ACCESS_TOKEN_SECRET else 'EMPTY'}")
-
-    # 認証確認：自分のユーザー情報を取得
-    try:
-        me = client.get_me()
-        print(f"[debug] 認証OK: @{me.data.username} (id={me.data.id})")
-    except tweepy.TweepyException as e:
-        print(f"[debug] 認証確認失敗: {e}")
-
     try:
         response = client.create_tweet(text=TWEET_TEXT)
         tweet_id = response.data["id"]
@@ -60,9 +47,6 @@ def main():
         print(f"URL: https://x.com/casemaster_pro/status/{tweet_id}")
     except tweepy.TweepyException as e:
         print(f"❌ 投稿失敗: {e}")
-        if hasattr(e, 'response') and e.response is not None:
-            print(f"[debug] status_code: {e.response.status_code}")
-            print(f"[debug] response body: {e.response.text}")
         sys.exit(1)
 
 
