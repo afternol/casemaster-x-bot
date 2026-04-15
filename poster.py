@@ -65,7 +65,7 @@ def run_poster(dry_run: bool = False) -> None:
             continue
 
         try:
-            response = client.create_tweet(text=text)
+            response = client.create_tweet(text=text, user_auth=True)
             tweet_id = str(response.data["id"])
 
             sb.table("x_post_queue").update({
