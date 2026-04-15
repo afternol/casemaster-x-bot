@@ -53,21 +53,20 @@ def main():
     print(f"[debug] ACC_TOKEN  : {'SET' if X_ACCESS_TOKEN else 'EMPTY'}")
     print(f"[debug] ACC_SECRET : {'SET' if X_ACCESS_TOKEN_SECRET else 'EMPTY'}")
 
-    # 認証確認：自分のユーザー情報を取得（Read権限のみで可能）
+    # 認証確認：自分のユーザー情報を取得
     try:
-        me = client.get_me(user_auth=True)
+        me = client.get_me()
         print(f"[debug] 認証OK: @{me.data.username} (id={me.data.id})")
     except tweepy.TweepyException as e:
         print(f"[debug] 認証確認失敗: {e}")
 
     try:
-        response = client.create_tweet(text=TWEET_TEXT, user_auth=True)
+        response = client.create_tweet(text=TWEET_TEXT)
         tweet_id = response.data["id"]
         print(f"✅ 投稿成功！ tweet_id={tweet_id}")
         print(f"URL: https://x.com/casemaster_pro/status/{tweet_id}")
     except tweepy.TweepyException as e:
         print(f"❌ 投稿失敗: {e}")
-        # 詳細なレスポンス情報を出力
         if hasattr(e, 'response') and e.response is not None:
             print(f"[debug] status_code: {e.response.status_code}")
             print(f"[debug] response body: {e.response.text}")
