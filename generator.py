@@ -26,7 +26,7 @@ FORBIDDEN_PHRASES = [
 ]
 
 MAX_TWEET_LENGTH = 140
-MIN_TWEET_LENGTH = 110  # X Free API の上限は140文字
+MIN_TWEET_LENGTH = 80   # X Free API の上限は140文字。80〜140文字が有効範囲
 MAX_RETRIES = 3
 
 # ── 共通フォーマット指示（全プロンプトに埋め込む） ────────────────
