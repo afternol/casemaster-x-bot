@@ -67,6 +67,12 @@ def run_poster(dry_run: bool = False) -> None:
         sched  = row["scheduled_at"]
 
         print(f"  id={row_id} type={ctype} scheduled={sched}")
+        # テキスト詳細ログ（問題診断用）
+        print(f"  [text] len={len(text)} repr_first100={repr(text[:100])}")
+        text_stripped = text.strip()
+        if text_stripped != text:
+            print(f"  [warn] テキストに前後の空白/改行あり → strip() 適用")
+            text = text_stripped
 
         if dry_run:
             print(f"  [DRY RUN] {text[:80]}{'...' if len(text) > 80 else ''}")
