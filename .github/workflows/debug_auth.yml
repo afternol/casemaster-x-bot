@@ -31,9 +31,9 @@ jobs:
       - name: Run auth diagnostic
         run: |
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-            python cleanup_and_reschedule.py --dry
+            python generate_and_post.py --dry
           else
-            python cleanup_and_reschedule.py
+            python generate_and_post.py
           fi
         env:
           X_API_KEY:             ${{ secrets.X_API_KEY }}
