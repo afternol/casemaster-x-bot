@@ -52,6 +52,14 @@ def run_poster(dry_run: bool = False) -> None:
     print(f"[poster] {len(rows)} 件を投稿します")
     client = None if dry_run else _get_client()
 
+    # 認証アカウント確認（どのユーザーとして認証されているか）
+    if client:
+        try:
+            me = client.get_me()
+            print(f"[poster] 認証ユーザー: id={me.data.id} name={me.data.name}")
+        except Exception as auth_err:
+            print(f"[poster] 認証確認失敗: {auth_err}")
+
     for row in rows:
         row_id = row["id"]
         text   = row["text"]
@@ -79,12 +87,23 @@ def run_poster(dry_run: bool = False) -> None:
 
         except tweepy.TweepyException as e:
             error_msg = str(e)
+            # 詳細エラー情報を出力（根本原因特定用）
+            print(f"  [失敗] {error_msg}")
+            if hasattr(e, "api_codes"):
+                print(f"  [詳細] api_codes={e.api_codes}")
+            if hasattr(e, "api_messages"):
+                print(f"  [詳細] api_messages={e.api_messages}")
+            if hasattr(e, "response") and e.response is not None:
+                print(f"  [詳細] status_code={e.response.status_code}")
+                try:
+                    print(f"  [詳細] response_body={e.response.text[:500]}")
+                except Exception:
+                    pass
+
             sb.table("x_post_queue").update({
                 "status": "failed",
                 "error":  error_msg,
             }).eq("id", row_id).execute()
-
-            print(f"  [失敗] {error_msg}")
 
     print("[poster] 処理完了")
 
