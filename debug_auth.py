@@ -1,25 +1,14 @@
 """
-認証診断スクリプト v2
-- 認証確認
-- Supabase から pending レコードを取得してテキストを検査
-- 実際に投稿して 403 の原因を特定
+認証診断スクリプト v3
+特殊文字・書式を段階的に取り除いて 403 の原因を特定する
 """
 import sys
 import tweepy
 from config import (
     X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET,
-    SUPABASE_URL, SUPABASE_SERVICE_KEY,
 )
 
 dry_run = "--dry" in sys.argv
-
-print("=" * 60)
-print("[debug] 認証情報プレフィックス確認")
-print(f"  X_API_KEY:             {X_API_KEY[:6]}...")
-print(f"  X_API_SECRET:          {X_API_SECRET[:6]}...")
-print(f"  X_ACCESS_TOKEN:        {X_ACCESS_TOKEN[:6]}...")
-print(f"  X_ACCESS_TOKEN_SECRET: {X_ACCESS_TOKEN_SECRET[:6]}...")
-print("=" * 60)
 
 client = tweepy.Client(
     consumer_key=X_API_KEY,
@@ -29,84 +18,65 @@ client = tweepy.Client(
     wait_on_rate_limit=True,
 )
 
-# Step 1: 認証確認
-print("\n[Step1] get_me() — 認証ユーザー確認")
-try:
-    me = client.get_me()
-    print(f"  ✅ 認証成功: @{me.data.username} (id={me.data.id})")
-except tweepy.TweepyException as e:
-    print(f"  ❌ 認証失敗: {e}")
-    sys.exit(1)
-
-# Step 2: Supabase から pending レコードを取得して検査
-print("\n[Step2] Supabase pending レコード取得・テキスト検査")
-from supabase import create_client
-from datetime import datetime, timezone
-
-sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-result = (
-    sb.table("x_post_queue")
-    .select("*")
-    .eq("status", "pending")
-    .order("scheduled_at")
-    .limit(3)
-    .execute()
-)
-rows = result.data
-print(f"  pending件数: {len(rows)}")
-
-for row in rows:
-    text = row["text"]
-    print(f"\n  --- id={row['id'][:8]}... type={row['content_type']} scheduled={row['scheduled_at']} ---")
-    print(f"  len(text)={len(text)}")
-    print(f"  repr(全文)={repr(text)}")
-
-    # 問題のある文字チェック
-    stripped = text.strip()
-    if stripped != text:
-        print(f"  ⚠️  前後に空白/改行あり（{len(text) - len(stripped)}文字差）")
-    if '\r' in text:
-        print(f"  ⚠️  \\r (CR) が含まれている")
-    if '\x00' in text:
-        print(f"  ⚠️  null バイトが含まれている")
-    if len(text) > 280:
-        print(f"  ⚠️  280文字超過: {len(text)}文字")
-
-# Step 3: pending の最初のレコードを実際に投稿テスト
-if rows:
-    target = rows[0]
-    text = target["text"].strip()
-    print(f"\n[Step3] pending最初のレコードを投稿テスト（dry_run={dry_run}）")
-    print(f"  対象: type={target['content_type']} scheduled={target['scheduled_at']}")
-    print(f"  テキスト({len(text)}文字): {text[:100]}...")
-
+def try_post(label: str, text: str):
+    print(f"\n[TEST] {label}")
+    print(f"  len={len(text)}")
     if dry_run:
-        print("  [DRY RUN] 投稿スキップ")
-    else:
-        try:
-            response = client.create_tweet(text=text, user_auth=True)
-            tweet_id = response.data["id"]
-            print(f"  ✅ 投稿成功: tweet_id={tweet_id}")
-            print(f"  URL: https://x.com/casemaster_pro/status/{tweet_id}")
+        print(f"  [DRY RUN] {repr(text[:80])}")
+        return True
+    try:
+        response = client.create_tweet(text=text, user_auth=True)
+        tweet_id = response.data["id"]
+        print(f"  ✅ 成功: tweet_id={tweet_id}")
+        return True
+    except tweepy.TweepyException as e:
+        print(f"  ❌ 失敗: {e}")
+        if hasattr(e, "response") and e.response is not None:
+            print(f"  response_body: {e.response.text}")
+        return False
 
-            # Supabase を更新
-            from datetime import datetime, timezone
-            sb.table("x_post_queue").update({
-                "status": "posted",
-                "tweet_id": str(tweet_id),
-                "posted_at": datetime.now(timezone.utc).isoformat(),
-                "error": None,
-            }).eq("id", target["id"]).execute()
-            print("  ✅ Supabase status → posted に更新")
+# 失敗したテキスト（Supabase から取得した実物）
+FAILING_TEXT = '「日本の自動販売機の台数は？」\n\n自信満々に手を挙げた。\n「約500万台です。根拠は人口÷20で——」\n\n面接官が静かに言った。\n「実際は約200〜250万台ですね」\n\n頭が真っ白になった。\n数字は合っていると思っていた。\nでも人口比例で割った時点で、すでに間違いだった。\n\n─────────────\n\n自動販売機は「人口」より「設置場所の密度」で考える。\n駅・工場・学校・オフィス・屋外スペース……\n\nフェルミは「何を軸に分解するか」が9割。\n自信より、分解の筋道を先に点検しよう。\n\n#ケース面接 #コンサル就活'
 
-        except tweepy.TweepyException as e:
-            print(f"  ❌ 投稿失敗: {e}")
-            if hasattr(e, "api_codes"):
-                print(f"  api_codes: {e.api_codes}")
-            if hasattr(e, "api_messages"):
-                print(f"  api_messages: {e.api_messages}")
-            if hasattr(e, "response") and e.response is not None:
-                print(f"  status_code: {e.response.status_code}")
-                print(f"  response_body: {e.response.text}")
-else:
-    print("\n[Step3] pending レコードなし — スキップ")
+print("=" * 60)
+print(f"元テキスト: {len(FAILING_TEXT)}文字")
+print("=" * 60)
+
+# Test 1: 罫線 ─────────── を削除
+t1 = FAILING_TEXT.replace("─────────────", "")
+success = try_post("罫線(─)削除版", t1)
+if success and not dry_run:
+    print("  → 罫線が原因と判明")
+    sys.exit(0)
+
+# Test 2: 罫線 + 空行を削除して1改行に統一
+import re
+t2 = re.sub(r'\n{2,}', '\n', FAILING_TEXT.replace("─────────────", ""))
+success = try_post("罫線削除 + 空行を1改行に", t2)
+if success and not dry_run:
+    print("  → 罫線と空行が原因と判明")
+    sys.exit(0)
+
+# Test 3: 特殊記号を全て置換（÷→/、——→—、……→...、─→-）
+t3 = FAILING_TEXT.replace("─────────────", "---").replace("——", "—").replace("÷", "/").replace("……", "...")
+success = try_post("特殊記号を全置換版", t3)
+if success and not dry_run:
+    print("  → 特殊記号が原因と判明")
+    sys.exit(0)
+
+# Test 4: ハッシュタグを1個だけに
+t4 = FAILING_TEXT.replace("─────────────", "---").replace("——", "—").replace("÷", "/").replace("……", "...").replace("#ケース面接 #コンサル就活", "#ケース面接")
+success = try_post("特殊記号置換 + ハッシュタグ1個版", t4)
+if success and not dry_run:
+    print("  → 複数ハッシュタグも関係していた可能性")
+    sys.exit(0)
+
+# Test 5: プレーンテキスト（日本語のみ、記号・改行なし）
+t5 = "フェルミ推定では分解の軸が重要です。自動販売機の台数を「人口÷定数」で出すと間違い。設置場所の密度で考えることが正解への近道。分解の筋道を先に点検しましょう。 #ケース面接"
+success = try_post("プレーンテキスト版", t5)
+if success and not dry_run:
+    print("  → フォーマット（改行・罫線）が根本原因")
+    sys.exit(0)
+
+if not dry_run:
+    print("\n❌ 全テスト失敗 — トークンまたはアカウントレベルの問題の可能性")
