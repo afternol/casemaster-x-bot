@@ -31,9 +31,9 @@ jobs:
       - name: Run auth diagnostic
         run: |
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-            python debug_auth.py --dry
+            python cleanup_and_reschedule.py --dry
           else
-            python debug_auth.py
+            python cleanup_and_reschedule.py
           fi
         env:
           X_API_KEY:             ${{ secrets.X_API_KEY }}
@@ -42,3 +42,5 @@ jobs:
           X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
           SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY:  ${{ secrets.SUPABASE_SERVICE_KEY }}
+          ANTHROPIC_API_KEY:     ${{ secrets.ANTHROPIC_API_KEY }}
+          SITE_URL:              ${{ secrets.SITE_URL }}
