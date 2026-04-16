@@ -41,7 +41,7 @@ def main():
     )
 
     try:
-        response = client.create_tweet(text=TWEET_TEXT)
+        response = client.create_tweet(text=TWEET_TEXT, user_auth=True)
         tweet_id = response.data["id"]
         print(f"✅ 投稿成功！ tweet_id={tweet_id}")
         print(f"URL: https://x.com/casemaster_pro/status/{tweet_id}")
