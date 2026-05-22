@@ -59,12 +59,16 @@ def get_used_slots(sb, start_date: date, end_date: date) -> dict[date, set[tuple
     return used
 
 
+MORNING_WINDOWS = [w for w in TIME_WINDOWS if w["name"] in ("朝A", "朝B")]
+
+
 def find_next_free_slot(start_day: date, max_per_day: int,
                         used: dict[date, set[tuple[int, int]]],
                         added_today: dict[date, int]) -> tuple[date, dict, int]:
     """
     start_day 以降で、当日追加件数が max_per_day 未満で、
-    まだ使われていない時間枠を探して (date, window, slot_index) を返す。
+    朝A or 朝B からランダム選択した未使用枠を返す。
+    日付シードでランダム化するので冪等。
     """
     d = start_day
     attempts = 0
@@ -75,9 +79,13 @@ def find_next_free_slot(start_day: date, max_per_day: int,
             d += timedelta(days=1)
             attempts += 1
             continue
+        # 朝A/朝B の順序を日付シードでランダム化
+        rng = random.Random(int(d.strftime("%Y%m%d")) + 7777)
+        windows_shuffled = MORNING_WINDOWS[:]
+        rng.shuffle(windows_shuffled)
         # 既に使われた枠を避けて選ぶ
         for offset in range(20, 100):  # offset 20+ で通常スケジュールと衝突回避
-            for window in TIME_WINDOWS:
+            for window in windows_shuffled:
                 t = random_time_in_window(window, d, offset)
                 key = (t.hour, t.minute)
                 if key not in used.get(d, set()):
