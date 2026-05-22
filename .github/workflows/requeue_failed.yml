@@ -1,0 +1,51 @@
+name: Requeue Failed
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'ドライラン（DB更新しない）'
+        required: false
+        default: 'true'
+        type: choice
+        options: ['true', 'false']
+      max_per_day:
+        description: '1日あたりの追加投稿数上限'
+        required: false
+        default: '2'
+        type: string
+      days:
+        description: '直近N日分のfailedを対象'
+        required: false
+        default: '60'
+        type: string
+
+jobs:
+  requeue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run requeue
+        run: |
+          ARGS="--max ${{ github.event.inputs.max_per_day }} --days ${{ github.event.inputs.days }}"
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            python requeue_failed.py --dry $ARGS
+          else
+            python requeue_failed.py $ARGS
+          fi
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
