@@ -65,6 +65,17 @@ def fetch_recent_tweets(sb, limit: int = 30) -> list[str]:
     return [row["text"] for row in result.data]
 
 
+def window_of(dt: datetime) -> str | None:
+    """与えられた時刻(JST)がどの TIME_WINDOWS 枠に属するかを返す（なければ None）"""
+    minute = dt.hour * 60 + dt.minute
+    for w in TIME_WINDOWS:
+        start_min = w["start"][0] * 60 + w["start"][1]
+        end_min   = w["end"][0]   * 60 + w["end"][1]
+        if start_min <= minute <= end_min:
+            return w["name"]
+    return None
+
+
 def schedule_today(dry_run: bool = False) -> None:
     today   = today_jst()
     windows = select_windows(today)
@@ -74,28 +85,52 @@ def schedule_today(dry_run: bool = False) -> None:
     from supabase import create_client
     sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
+    # 既存行を確認し、「不足している枠だけ」を埋める（failed 行はカウントしない）
+    # ※従来はステータス無視で1件でもあれば全枠スキップしていたため、
+    #   過去の failed/再配置行が1件残ると残りの枠が永久に作られなかった。
+    occupied_windows: set[str] = set()
+    valid_count = 0
     if not dry_run:
-        # 冪等チェック: 今日すでに登録済みなら何もしない
         today_start = datetime(today.year, today.month, today.day, 0, 0, 0, tzinfo=JST).isoformat()
         today_end   = datetime(today.year, today.month, today.day, 23, 59, 59, tzinfo=JST).isoformat()
         existing = (
             sb.table("x_post_queue")
-            .select("id", count="exact")
+            .select("scheduled_at,status")
             .gte("scheduled_at", today_start)
             .lte("scheduled_at", today_end)
             .execute()
         )
-        count = existing.count if hasattr(existing, "count") else len(existing.data)
-        if count and count > 0:
-            print(f"[scheduler] 今日の投稿はすでに {count} 件登録済み。スキップ。")
+        for row in existing.data or []:
+            if row.get("status") in ("pending", "posted"):
+                valid_count += 1
+                try:
+                    dt = datetime.fromisoformat(row["scheduled_at"]).astimezone(JST)
+                    wname = window_of(dt)
+                    if wname:
+                        occupied_windows.add(wname)
+                except (ValueError, KeyError):
+                    pass
+
+        if valid_count >= DAILY_POST_COUNT:
+            print(f"[scheduler] 今日は有効な投稿が {valid_count} 件（>= {DAILY_POST_COUNT}）。スキップ。")
             return
+        if valid_count > 0:
+            print(f"[scheduler] 今日は有効な投稿が {valid_count} 件のみ。不足分 {DAILY_POST_COUNT - valid_count} 件を補充。")
 
     # 過去ツイートを取得して重複回避に使う
     recent_tweets = fetch_recent_tweets(sb)
     print(f"[scheduler] 過去ツイート {len(recent_tweets)} 件を重複チェック用に取得")
 
+    need = DAILY_POST_COUNT - valid_count
     records = []
     for i, window in enumerate(windows):
+        if not dry_run and len(records) >= need:
+            break
+        # 既に有効な投稿で埋まっている枠はスキップ（重複回避）
+        if window["name"] in occupied_windows:
+            print(f"  [{window['name']}枠] 既に登録済み。スキップ。")
+            continue
+
         scheduled_at = random_time_in_window(window, today, i)
         content_type = pick_content_type(today, i)
 
