@@ -74,13 +74,26 @@ def _load_yaml(filename: str) -> list[dict]:
 
 def _call_claude(prompt: str) -> str:
     client = _get_client()
+    # 2026-11-24: Sonnet 4.6 → Opus 5.5（構成名を伏せた比較で総合点が最も高かった。1日1件なので費用は月数十円）
+    # Opus 5.5 は考える過程が常に有効。そのぶん max_tokens に余裕を持たせ、本文はテキストのブロックだけを取り出す
     response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=600,
+        model="claude-opus-5-5",
+        max_tokens=4000,
         system=_get_system_prompt(),
         messages=[{"role": "user", "content": prompt}],
+        extra_body={"output_config": {"effort": "medium"}},
     )
-    return response.content[0].text.strip()
+    text = "".join(b.text for b in response.content if getattr(b, "type", "") == "text").strip()
+    if not text:
+        # 応答拒否（stop_reason: refusal）などで本文が空のときは、従来のモデルで作り直す
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=600,
+            system=_get_system_prompt(),
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(b.text for b in response.content if getattr(b, "type", "") == "text").strip()
+    return text
 
 
 # ── コンテンツタイプ別生成関数 ─────────────────────────────────
