@@ -13,6 +13,14 @@ on:
         type: choice
         options: ['true', 'false']
 
+# keepalive ステップが .keepalive をコミットするため contents: write が必要
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-schedule
+  cancel-in-progress: false
+
 jobs:
   schedule:
     runs-on: ubuntu-latest
@@ -48,3 +56,26 @@ jobs:
           X_API_SECRET:          ${{ secrets.X_API_SECRET }}
           X_ACCESS_TOKEN:        ${{ secrets.X_ACCESS_TOKEN }}
           X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+
+      # GitHub は 60 日間リポジトリに活動がないと scheduled workflow を自動無効化する。
+      # 最終コミットが 30 日以上前なら .keepalive を更新してコミットする（月1回程度）。
+      # - scheduler が失敗しても実行する（if: always()）
+      # - GITHUB_TOKEN による push は新たなワークフロー実行を起動しない。
+      #   さらに本リポジトリに push トリガーのワークフローは無いのでループしない。
+      - name: Keepalive (prevent 60-day auto-disable)
+        if: always()
+        run: |
+          last=$(git log -1 --format=%ct)
+          now=$(date +%s)
+          age_days=$(( (now - last) / 86400 ))
+          echo "last commit: ${age_days} days ago"
+          if [ "$age_days" -lt 30 ]; then
+            echo "keepalive not needed"
+            exit 0
+          fi
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .keepalive
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .keepalive
+          git commit -m "chore: keepalive [skip ci]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

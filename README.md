@@ -8,16 +8,18 @@ GitHub Actions + Claude Haiku + Supabase + Tweepy で動作する。
 ```
 casemaster-x-bot/
 ├── .github/workflows/
-│   ├── schedule.yml   # 毎日0:30 JST: 本日の投稿3件を生成しキューに登録
-│   └── poster.yml     # 30分ごと: キューから投稿時刻を過ぎたものをXに投稿
+│   ├── schedule.yml   # 毎日0:30 JST: 本日の投稿1件(20:00 JST)を生成しキューに登録 + keepalive
+│   ├── poster.yml     # 30分ごと: 投稿時刻を過ぎたpendingを1件だけXに投稿
+│   └── requeue_failed.yml # 手動: failed行を空き日の20:00に1日1件で再投入
 ├── content/
 │   ├── frameworks.yml # フレームワーク素材
 │   ├── fermi.yml      # フェルミ推定問題素材
 │   └── character.md   # キャラクター設定
 ├── config.py          # 設定・定数
-├── generator.py       # Claude Haiku でツイート本文を生成
-├── scheduler.py       # 本日の投稿枠選択 → 本文生成 → Supabase登録
-├── poster.py          # Supabaseキュー確認 → Tweepy で投稿
+├── generator.py       # Claude でツイート本文を生成（検証NGは例外・キューに入れない）
+├── text_rules.py      # 重み付き文字数(URL=23)・禁止表現・UTM付与（generator/poster共通）
+├── scheduler.py       # 本日の1件(20:00 JST)の本文生成 → Supabase登録
+├── poster.py          # Supabaseキュー確認 → 1件だけ Tweepy で投稿
 ├── supabase_setup.sql # テーブル作成SQL
 └── requirements.txt
 ```
@@ -38,37 +40,41 @@ casemaster-x-bot/
 | `ANTHROPIC_API_KEY` | Anthropic Console |
 | `SUPABASE_URL` | Project Settings > API > Project URL |
 | `SUPABASE_SERVICE_KEY` | Project Settings > API > service_role key |
-| `SITE_URL` | `https://casemasterpro.com`（任意） |
+| `SITE_URL` | `https://casemaster-pro.com/`（任意・**ハイフン必須**。未設定/誤設定時はこの既定値を使用） |
 
 ### 3. GitHub リポジトリにプッシュ
 Actions が自動的にスケジュール実行される。
 
 ## 投稿スケジュール
 
-6つの時間枠から毎日3枠を選ぶ（日付シードで冪等）。
+**1日1投稿・毎日 20:00 JST 固定**（`config.POST_TIME_JST`）。
 
-| 枠名 | 時間帯 (JST) |
+| 時刻 (JST) | 処理 |
 |---|---|
-| 朝A | 6:55 〜 8:20 |
-| 朝B | 9:10 〜 10:40 |
-| 昼 | 11:45 〜 13:35 |
-| 午後 | 14:20 〜 16:10 |
-| 夕方 | 17:30 〜 19:40 |
-| 夜 | 20:45 〜 23:10 |
+| 0:30 | `schedule.yml`: 当日分1件を生成し pending 登録（既に pending/posted があればスキップ） |
+| 20:00 以降の最初の poster 実行（通常 20:00〜20:30 台） | `poster.yml`: 1件投稿 |
+| 23:00 を過ぎても未投稿 | 次の poster 実行で `failed`（error=`[stale]...`）にし、投稿しない |
 
-## コンテンツタイプ（9種）
+- poster は1回の実行で最大1件。直近12時間以内に投稿済みなら見送る（二重投稿防止）
+- promo（ツール紹介）は **毎週日曜（`PROMO_WEEKDAY`）に固定** ＝ 全体の約14%。それ以外の日は promo 以外から重み付き抽選
+- 生成が検証NG（重み280超・禁止表現など）の場合はキューに入れず `failed`（`[invalid]`）を記録し、ワークフローは失敗終了
+- 投稿失敗（402/403/429等）は行に error を記録し、ワークフローは失敗終了（GitHub からメール通知）
 
-| タイプ | 内容 | 重み |
-|---|---|---|
-| framework | フレームワーク解説 | 15 |
-| tips | 面接実践tips | 15 |
-| question | 練習問題 | 13 |
-| fermi | フェルミ推定問題 | 12 |
-| mistake | よくある失敗・NG | 12 |
-| terminology | コンサル用語解説 | 10 |
-| industry | 業界別ケース切り口 | 10 |
-| quote | 名言・格言 | 8 |
-| promo | ツール紹介 | 5 |
+## リンク計測（UTM）
+
+casemaster-pro.com への URL には必ず `utm_source=x&utm_medium=social&utm_campaign=<content_type>` を付与する
+（既存クエリがあれば `&` で連結、既存 utm_* は置換）。リンク先はトップページのみ。
+ハイフンなしドメイン `casemasterpro.com` は禁止フレーズとして検出する。
+
+## keepalive（60日自動無効化の防止）
+
+GitHub は60日間リポジトリに活動がないと scheduled workflow を無効化する。
+`schedule.yml` の最終ステップが、最終コミットから30日以上経っていれば `.keepalive` を更新してコミットする。
+GITHUB_TOKEN による push は他ワークフローを起動しないためループしない。
+
+## コンテンツタイプ（30種）
+
+種類と抽選の重みは `config.CONTENT_TYPES` を参照（promo は重み0で抽選対象外、日曜に固定配信）。
 
 ## ローカル実行・テスト
 
@@ -85,11 +91,11 @@ python scheduler.py --dry
 python poster.py --dry
 
 # コンテンツ生成テスト（1件）
-python generator.py tips
-python generator.py framework
+python generator.py relatable
+python generator.py promo
 ```
 
 ## API使用量目安（X Free Tier）
 
-- 投稿: 3件/日 × 30日 = 90件/月（上限500件/月に対して余裕あり）
-- poster.yml は30分ごとに実行されるが、投稿がない場合は即終了する
+- 投稿: 1件/日 × 30日 = 約30件/月
+- poster.yml は30分ごとに実行されるが、投稿がない場合は即終了する（X API は呼ばない）

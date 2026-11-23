@@ -2,7 +2,8 @@ name: Post Queue
 
 on:
   schedule:
-    # 30分ごとに実行
+    # 30分ごとに実行（投稿は20:00 JST の1件のみ。対象がなければ即終了）
+    # 1回の実行で最大1件・予定から3時間超過した pending は投稿せず failed にする
     - cron: '*/30 * * * *'
   workflow_dispatch:
     inputs:
@@ -12,6 +13,14 @@ on:
         default: 'false'
         type: choice
         options: ['true', 'false']
+
+permissions:
+  contents: read
+
+# 手動実行と定期実行が重なっても同じ行を二重投稿しないよう直列化
+concurrency:
+  group: poster
+  cancel-in-progress: false
 
 jobs:
   post:

@@ -11,31 +11,25 @@ from pathlib import Path
 import anthropic
 
 from config import ANTHROPIC_API_KEY, SITE_URL, CONTENT_DIR
+# 検証・UTM付与ルールは poster.py と共有する（twitter_weight は互換のため再エクスポート）
+from text_rules import (  # noqa: F401
+    FORBIDDEN_PHRASES, MAX_TWEET_WEIGHT, MIN_TWEET_WEIGHT,
+    add_utm, check_text, twitter_weight,
+)
 
 JST = timezone(timedelta(hours=9))
 
 # ── バリデーション設定 ───────────────────────────────────────────
-
-# コードで機械的に検出する禁止フレーズ（Claudeの自己チェックに依存しない）
-FORBIDDEN_PHRASES = [
-    "一度だけ", "まず1回", "試しに", "1回だけ",
-    "合格率", "内定率", "合格保証", "内定保証",
-    "業界No.1", "業界ナンバーワン", "唯一の", "最高の",
-    "casemasterpro.com",           # 誤URL（ハイフンなし）
-    "casemaster pro.com",
-]
-
-MAX_TWEET_WEIGHT = 280   # Twitter の重み上限（日本語1文字=重み2、ASCII=重み1）
-MIN_TWEET_WEIGHT = 180   # 短すぎる投稿を防ぐ下限
 MAX_RETRIES = 3
 
 
-def twitter_weight(text: str) -> int:
-    """Twitter の文字重みを計算する（日本語・絵文字など非ASCII = 2、ASCII = 1）"""
-    weight = 0
-    for ch in text:
-        weight += 1 if ord(ch) <= 0x007F else 2
-    return weight
+class TweetValidationError(Exception):
+    """最大リトライ後も検証を通過しなかった（キューに入れてはいけない）"""
+
+    def __init__(self, errors: list[str], last_text: str):
+        super().__init__("; ".join(errors))
+        self.errors = errors
+        self.last_text = last_text
 
 
 # ── 共通フォーマット指示（全プロンプトに埋め込む） ────────────────
@@ -353,13 +347,17 @@ def _gen_question(recent_block: str = "") -> str:
 
 def _gen_promo(recent_block: str = "") -> str:
     """ツール紹介型：押しつけがましくなく自然にCaseMaster Proを紹介する"""
+    # 角度の事実は content/character.md の仕様表・機能一覧にあるもののみ
     angles = [
-        "AIと本番同様のケース面接練習ができる点",
-        "即時フィードバックで弱点が一目でわかる点",
+        "AIと本番同様のケース面接練習ができる点（本番形式: 前提確認→構造化→分析→統合→最終提言の5フェーズ）",
+        "回答ごとの一言フィードバックと、フェーズ／ステップごとの★（1〜3）評価で、どこでつまずいたかがその場でわかる点",
         "フェルミ推定・フレームワーク演習が充実している点",
-        "無料で月3回使える手軽さ",
+        "Explorer（無料）プランで本番形式のAI面接が月3回使える点",
         "6軸スコアで成長が数値で見える点",
         "一人でも面接練習できる点（相手不要）",
+        "10分ミニケース: 前提確認→構造化→結論の3ステップ、約10分で1問。すき間時間でも毎日続けやすい点",
+        "10分ミニケースは本番形式の月の回数を使わない点。Explorer（無料）でも無料の6問から月5回まで練習できる",
+        "10分ミニケースの「今日の1問」で毎日の練習習慣をつくれる点",
     ]
     angle = random.choice(angles)
     prompt = f"""あなたはケース面接対策AIツール「CaseMaster Pro」の公式アカウントです。
@@ -372,9 +370,12 @@ def _gen_promo(recent_block: str = "") -> str:
 追加条件:
 - 「〇〇で悩んでいる方へ」「こんな練習方法があります」などの共感フックで始める（売り込みは避ける）
 - 具体的なメリットや使い方のイメージを2〜3行で説明
-- URLを末尾の行に含める
+- URLは上記サイトURL（トップページ）をそのまま末尾の行に1回だけ含める（パスやクエリを付け足さない）
+- 料金・回数・機能はシステムプロンプトの仕様表・機能一覧にある事実のみ。書かれていない数値や機能は作らない
+- ミニケースの無料枠は「無料の6問から月5回まで」。「無制限」「何度でも無料」とは書かない
 - 「毎日」「繰り返し」「継続」「積み上げ」など継続・反復利用を促す表現を自然に盛り込む
-- 「一度だけ」「まず1回」など単発利用を促す表現は絶対に使わない
+- 「一度だけ」「まず1回」「試しに」など単発利用を促す表現は絶対に使わない
+- 「合格率」「保証」「No.1」など根拠のない表現は絶対に使わない
 - 絵文字1〜2個
 - 構造例：【共感フック1行】→【メリット解説2〜3行】→【URL】→【ハッシュタグ】
 - ハッシュタグは「#ケース面接」のみ"""
@@ -1060,36 +1061,15 @@ def _validate(text: str, content_type: str) -> list[str]:
     Claudeの自己チェックには依存しない。
     戻り値: エラーメッセージのリスト（空リストなら合格）
     """
-    errors = []
-
-    # 1. Twitter重みチェック（日本語1文字=重み2、ASCII=重み1、上限280）
-    w = twitter_weight(text)
-    if w > MAX_TWEET_WEIGHT:
-        errors.append(f"文字数超過: Twitter重み{w}（上限{MAX_TWEET_WEIGHT}）")
-    elif w < MIN_TWEET_WEIGHT:
-        errors.append(f"文字数不足: Twitter重み{w}（最低{MIN_TWEET_WEIGHT}以上必要）")
-
-    # 2. 禁止フレーズチェック
-    for phrase in FORBIDDEN_PHRASES:
-        if phrase in text:
-            errors.append(f"禁止フレーズ含む: 「{phrase}」")
-
-    # 3. promoタイプはURLが必須かつ正しいURLであること
-    if content_type == "promo":
-        if "casemaster-pro.com" not in text:
-            errors.append("promoタイプにURLが含まれていない")
-
-    # 4. 空チェック
-    if not text.strip():
-        errors.append("空のテキスト")
-
-    return errors
+    # 重み上限/下限（URL=23換算）・禁止フレーズ・promoのURL必須・リンク先トップ限定
+    return check_text(text, content_type, check_min=True)
 
 
 def generate_tweet_text(content_type: str, recent_tweets: list[str] | None = None) -> str:
     """
-    指定タイプのツイートテキストを生成して返す。
-    バリデーション失敗時は最大MAX_RETRIES回まで再生成する。
+    指定タイプのツイートテキストを生成して返す（UTM付与済み）。
+    バリデーション失敗時は最大MAX_RETRIES回まで再生成し、
+    それでも不合格なら TweetValidationError を送出する（キューに入れない）。
     recent_tweets: 過去の投稿済みツイートテキストのリスト（重複回避に使用）
     """
     gen_fn = _GENERATORS.get(content_type)
@@ -1099,7 +1079,7 @@ def generate_tweet_text(content_type: str, recent_tweets: list[str] | None = Non
     recent_block = _build_recent_block(recent_tweets or [])
 
     for attempt in range(1, MAX_RETRIES + 1):
-        text = gen_fn(recent_block=recent_block)
+        text = add_utm(gen_fn(recent_block=recent_block).strip(), content_type)
         errors = _validate(text, content_type)
 
         if not errors:
@@ -1112,9 +1092,9 @@ def generate_tweet_text(content_type: str, recent_tweets: list[str] | None = Non
         violation_note = "【前回の生成で以下の違反がありました。必ず修正してください】\n" + "\n".join(f"- {e}" for e in errors)
         recent_block = f"{violation_note}\n\n{recent_block}"
 
-    # 最大リトライ後もNG → 最後の生成結果を警告付きで返す（止めるより投稿を優先）
-    print(f"    [validation] 最大リトライ到達。最終テキストを使用（要確認）")
-    return text
+    # 最大リトライ後もNG → キューに入れない（呼び出し側で記録し非ゼロ終了する）
+    print(f"    [validation] 最大リトライ到達。この投稿は破棄します: {errors}")
+    raise TweetValidationError(errors, text)
 
 
 # ── CLI ───────────────────────────────────────────────────────
