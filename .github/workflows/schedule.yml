@@ -2,8 +2,9 @@ name: Daily Schedule
 
 on:
   schedule:
-    # 毎日 15:30 UTC = 0:30 JST (翌日)
-    - cron: '30 15 * * *'
+    # 今日（JST）の投稿を作る。同じ日の分があれば作らない（count_valid_rows）ので複数回試しても1日1件
+    # 2,5,8 UTC = 11:17 / 14:17 / 17:17 JST（混雑する0分・30分を避ける）
+    - cron: '17 2,5,8 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
